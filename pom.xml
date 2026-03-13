@@ -1,0 +1,731 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.github.tabforgeai</groupId>
+    <artifactId>legacy-sql-architect-mcp</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>Legacy SQL Architect MCP</name>
+    <description>AI MCP server that enables LLM agents to understand, analyze and document legacy databases.</description>
+    <url>https://github.com/tabforgeai/legacy-sql-architect-mcp</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Svetozar Radojcin</name>
+            <email>svetozar.radojcin@outlook.com</email>
+            <url>https://github.com/tabforgeai</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/tabforgeai/legacy-sql-architect-mcp.git</connection>
+        <developerConnection>scm:git:https://github.com/tabforgeai/legacy-sql-architect-mcp.git</developerConnection>
+        <url>https://github.com/tabforgeai/legacy-sql-architect-mcp</url>
+        <tag>HEAD</tag>
+    </scm>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>21</maven.compiler.release>
+        <main.class>io.github.tabforgeai.legacysqlarchitect.server.MCPServer</main.class>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!--
+              BOM that pins the version for all embedded-postgres-binaries-* artifacts.
+              Changing the version here updates all platform binaries in one place.
+            -->
+            <dependency>
+                <groupId>io.zonky.test.postgres</groupId>
+                <artifactId>embedded-postgres-binaries-bom</artifactId>
+                <version>16.3.0</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+
+        <!-- MCP Java SDK -->
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+
+        <!-- Jackson 2 - JSON za nas kod (konzistentno sa mcp-core) -->
+        <!--
+          jackson-databind 2.20 is required because tools.jackson.core:jackson-databind:3.0.3
+          (used by the MCP SDK) was compiled against jackson-annotations 2.20, which added
+          JsonProperty.isRequired() (OptBoolean) and JsonFormat.Shape.POJO enum constant.
+          Version 2.19.0 lacks JsonFormat.Shape.POJO; 2.19.2 adds it.
+        -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.19.2</version>
+        </dependency>
+
+        <!-- JDBC Drajveri -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.5</version>
+        </dependency>
+        <dependency>
+            <groupId>com.microsoft.sqlserver</groupId>
+            <artifactId>mssql-jdbc</artifactId>
+            <version>12.8.1.jre11</version>
+        </dependency>
+        <!-- Oracle JDBC driver - published to Maven Central since 2019 -->
+        <dependency>
+            <groupId>com.oracle.database.jdbc</groupId>
+            <artifactId>ojdbc11</artifactId>
+            <version>23.6.0.24.10</version>
+        </dependency>
+
+        <!-- Markdown generacija -->
+        <dependency>
+            <groupId>com.vladsch.flexmark</groupId>
+            <artifactId>flexmark</artifactId>
+            <version>0.64.8</version>
+        </dependency>
+
+        <!-- Logging -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.16</version>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.5.15</version>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.11.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.27.3</version>
+            <scope>test</scope>
+        </dependency>
+        <!--
+          Embedded PostgreSQL for integration tests.
+          Starts a real PostgreSQL process in-memory — no Docker, no external
+          installation required. Any developer who runs "mvn test" gets a fully
+          working PostgreSQL 16 instance bundled as Maven test dependencies.
+
+          Version 2.0.7 uses PostgreSQL 16 binaries compiled with MSVC 2019+,
+          which resolves the initdb.exe failure seen with older 1.x binaries
+          (PostgreSQL 12/13, MSVC 2015) on Windows 10/11.
+
+          The platform-binary artifacts are declared explicitly below so the
+          build works on Windows (amd64), Linux (amd64), and macOS (both Intel
+          and Apple Silicon) without any developer configuration.
+          Versions are managed by the embedded-postgres-binaries-bom imported
+          in the <dependencyManagement> section.
+        -->
+        <dependency>
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <version>2.0.7</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-windows-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <!--
+          finalName without version suffix keeps the JAR name stable across
+          version bumps, which simplifies the installer profiles below
+          (each profile references the JAR by name, not by version).
+        -->
+        <finalName>legacy-sql-architect-mcp</finalName>
+
+        <plugins>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <compilerArgs>
+                        <arg>-parameters</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+            </plugin>
+
+            <!-- Fat JAR - sve zavisnosti u jednom izvrsnom JAR-u -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>${main.class}</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Maven Central - sources -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Maven Central - javadoc -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.11.2</version>
+                <configuration>
+                    <encoding>UTF-8</encoding>
+                    <charset>UTF-8</charset>
+                    <docencoding>UTF-8</docencoding>
+                    <additionalOptions>-Xdoclint:none</additionalOptions>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.7</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+          ══════════════════════════════════════════════════════════════════
+          NATIVE INSTALLER PROFILES
+          ══════════════════════════════════════════════════════════════════
+
+          Each profile produces a self-contained native installer that
+          bundles a stripped-down JRE (via jlink inside jpackage).
+          Users do NOT need Java installed on their system.
+
+          BUILD COMMANDS:
+            Windows EXE  (run on Windows):
+              JAVA_HOME="c:/Java_21" D:\Maven\bin\mvn clean package -P windows-exe -DskipTests
+
+            Linux DEB  (run on Ubuntu/Debian):
+              mvn clean package -P linux-deb
+
+            Linux RPM  (run on RHEL/Rocky/Fedora — requires rpmbuild):
+              mvn clean package -P linux-rpm
+
+            macOS DMG  (run on macOS):
+              mvn clean package -P macos-dmg
+
+          OUTPUT:  target/jpackage/
+
+          AFTER INSTALLATION — users must edit config.json:
+            Windows: C:\Program Files\LegacySQLArchitectMCP\app\config.json
+            Linux:   /opt/legacysqlarchitectmcp/lib/app/config.json
+            macOS:   /Applications/LegacySQLArchitectMCP.app/Contents/app/config.json
+
+          Claude Desktop / Cursor MCP config example (Windows):
+            {
+              "mcpServers": {
+                "legacy-sql-architect": {
+                  "command": "C:\\Program Files\\LegacySQLArchitectMCP\\LegacySQLArchitectMCP.exe"
+                }
+              }
+            }
+
+          HOW IT WORKS:
+            1. maven-antrun-plugin (package phase, runs after maven-shade-plugin):
+               Creates target/installer-input/ with:
+                 - legacy-sql-architect-mcp.jar  (fat JAR, all dependencies bundled)
+                 - config.json                   (template — edit with DB credentials)
+            2. jpackage-maven-plugin (package phase, runs after antrun):
+               Uses target/installer-input/ to build the platform installer.
+               jpackage internally calls jlink to produce a minimal JRE containing
+               only the modules used by the application.
+
+          NOTE ON winConsole:
+            winConsole=true is REQUIRED for MCP servers on Windows.
+            Without it, Windows creates a GUI-subsystem executable that does not
+            properly initialize STDIN/STDOUT, which breaks the stdio MCP protocol
+            that Claude Desktop uses to communicate with this server.
+        -->
+
+        <!-- ══════════════════════════════════════════════════════════════
+             Windows EXE installer (run this build on Windows)
+             ════════════════════════════════════════════════════════════ -->
+        <profile>
+            <id>windows-exe</id>
+            <build>
+                <plugins>
+                    <!-- Step 1: Prepare installer-input directory with JAR + config template -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>prepare-installer-input-windows</id>
+                                <phase>package</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <mkdir dir="${project.build.directory}/installer-input"/>
+                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              todir="${project.build.directory}/installer-input"
+                                              overwrite="true"/>
+                                        <copy file="${project.basedir}/src/main/resources/config.json"
+                                              todir="${project.build.directory}/installer-input"
+                                              overwrite="true"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <!-- Step 2: Build Windows EXE installer with bundled JRE -->
+                    <plugin>
+                        <groupId>org.panteleyev</groupId>
+                        <artifactId>jpackage-maven-plugin</artifactId>
+                        <version>1.7.2</version>
+                        <executions>
+                            <execution>
+                                <id>package-windows-exe</id>
+                                <phase>package</phase>
+                                <goals><goal>jpackage</goal></goals>
+                                <configuration>
+                                    <name>LegacySQLArchitectMCP</name>
+                                    <vendor>TabForge AI</vendor>
+                                    <appVersion>1.0.0</appVersion>
+                                    <description>MCP server for AI-assisted legacy database analysis</description>
+                                    <input>${project.build.directory}/installer-input</input>
+                                    <mainJar>${project.build.finalName}.jar</mainJar>
+                                    <mainClass>${main.class}</mainClass>
+                                    <destination>${project.build.directory}/jpackage</destination>
+                                    <type>EXE</type>
+
+                                    <!--
+                                      winConsole=true: REQUIRED for stdio MCP protocol.
+                                      Creates a console-subsystem executable so that
+                                      STDIN/STDOUT are properly initialized on Windows.
+                                    -->
+                                    <winConsole>true</winConsole>
+
+                                    <!--
+                                      No shortcut / menu entry: this is a background service
+                                      launched by Claude Desktop, not a user-facing desktop app.
+                                    -->
+                                    <winShortcut>false</winShortcut>
+                                    <winMenu>false</winMenu>
+
+                                    <!--
+                                      Per-machine install (Program Files) so the exe path
+                                      is stable and predictable in Claude Desktop's config.
+                                    -->
+                                    <winPerUserInstall>false</winPerUserInstall>
+                                    <winDirChooser>true</winDirChooser>
+
+                                    <!--
+                                      Unique upgrade UUID — identifies this product to Windows
+                                      Installer so upgrades replace the existing installation
+                                      rather than installing a second copy.
+                                    -->
+                                    <winUpgradeUuid>a1f3c27e-84b0-4d5e-9c1a-2e7f6b3d8a90</winUpgradeUuid>
+
+                                    <!-- JVM tuning: lightweight MCP server, no large heap needed -->
+                                    <javaOptions>
+                                        <option>-Xms32m</option>
+                                        <option>-Xmx256m</option>
+                                        <option>-Dfile.encoding=UTF-8</option>
+                                        <option>-Djava.net.preferIPv4Stack=true</option>
+                                    </javaOptions>
+
+                                    <verbose>true</verbose>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- ══════════════════════════════════════════════════════════════
+             Linux DEB installer — Ubuntu / Debian
+             (run this build on Ubuntu with dpkg-deb available)
+             ════════════════════════════════════════════════════════════ -->
+        <profile>
+            <id>linux-deb</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>prepare-installer-input-linux-deb</id>
+                                <phase>package</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <mkdir dir="${project.build.directory}/installer-input"/>
+                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              todir="${project.build.directory}/installer-input"
+                                              overwrite="true"/>
+                                        <copy file="${project.basedir}/src/main/resources/config.json"
+                                              todir="${project.build.directory}/installer-input"
+                                              overwrite="true"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <plugin>
+                        <groupId>org.panteleyev</groupId>
+                        <artifactId>jpackage-maven-plugin</artifactId>
+                        <version>1.7.2</version>
+                        <executions>
+                            <execution>
+                                <id>package-linux-deb</id>
+                                <phase>package</phase>
+                                <goals><goal>jpackage</goal></goals>
+                                <configuration>
+                                    <name>legacy-sql-architect-mcp</name>
+                                    <vendor>TabForge AI</vendor>
+                                    <appVersion>1.0.0</appVersion>
+                                    <description>MCP server for AI-assisted legacy database analysis</description>
+                                    <input>${project.build.directory}/installer-input</input>
+                                    <mainJar>${project.build.finalName}.jar</mainJar>
+                                    <mainClass>${main.class}</mainClass>
+                                    <destination>${project.build.directory}/jpackage</destination>
+                                    <type>DEB</type>
+                                    <linuxPackageName>legacy-sql-architect-mcp</linuxPackageName>
+                                    <linuxAppCategory>misc</linuxAppCategory>
+
+                                    <!--
+                                      Explicitly list only the Java modules this server app needs.
+                                      This prevents jpackage from including java.desktop (AWT/Swing),
+                                      which would otherwise pull in X11, ALSA, and other GUI libraries
+                                      as RPM/DEB dependencies — completely unnecessary for a stdio server.
+
+                                      Modules included:
+                                        java.base         – always required
+                                        java.sql          – JDBC API
+                                        java.naming       – JNDI (required by JDBC drivers)
+                                        java.logging      – java.util.logging (SLF4J bridge)
+                                        java.xml          – XML parsing (logback, Jackson)
+                                        java.management   – JMX (used by some JDBC drivers)
+                                        java.security.jgss – Kerberos auth (Oracle JDBC)
+                                        java.security.sasl – SASL auth (SQL Server JDBC)
+                                        jdk.crypto.ec     – TLS elliptic curve (SSL DB connections)
+                                        jdk.crypto.cryptoki – PKCS11 provider
+                                        jdk.unsupported   – sun.misc.Unsafe (Reactor/Netty internals)
+                                    -->
+                                    <addModules>
+                                        <addModule>java.base</addModule>
+                                        <addModule>java.sql</addModule>
+                                        <addModule>java.naming</addModule>
+                                        <addModule>java.logging</addModule>
+                                        <addModule>java.xml</addModule>
+                                        <addModule>java.management</addModule>
+                                        <addModule>java.security.jgss</addModule>
+                                        <addModule>java.security.sasl</addModule>
+                                        <addModule>jdk.crypto.ec</addModule>
+                                        <addModule>jdk.crypto.cryptoki</addModule>
+                                        <addModule>jdk.unsupported</addModule>
+                                    </addModules>
+
+                                    <!-- jlink: strip-debug, no-header-files, no-man-pages, compress=2 reduce bundled JRE size -->
+                                    <jlinkOptions>
+                                        <jlinkOption>--strip-debug</jlinkOption>
+                                        <jlinkOption>--no-header-files</jlinkOption>
+                                        <jlinkOption>--no-man-pages</jlinkOption>
+                                        <jlinkOption>--compress=2</jlinkOption>
+                                    </jlinkOptions>
+
+                                    <javaOptions>
+                                        <option>-Xms32m</option>
+                                        <option>-Xmx256m</option>
+                                        <option>-Dfile.encoding=UTF-8</option>
+                                        <option>-Djava.net.preferIPv4Stack=true</option>
+                                    </javaOptions>
+
+                                    <verbose>true</verbose>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- ══════════════════════════════════════════════════════════════
+             Linux RPM installer — RHEL / Rocky Linux / Fedora
+             (run this build on a RHEL-family system with rpmbuild available:
+              sudo dnf install rpm-build)
+             ════════════════════════════════════════════════════════════ -->
+        <profile>
+            <id>linux-rpm</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>prepare-installer-input-linux-rpm</id>
+                                <phase>package</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <mkdir dir="${project.build.directory}/installer-input"/>
+                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              todir="${project.build.directory}/installer-input"
+                                              overwrite="true"/>
+                                        <copy file="${project.basedir}/src/main/resources/config.json"
+                                              todir="${project.build.directory}/installer-input"
+                                              overwrite="true"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <plugin>
+                        <groupId>org.panteleyev</groupId>
+                        <artifactId>jpackage-maven-plugin</artifactId>
+                        <version>1.7.2</version>
+                        <executions>
+                            <execution>
+                                <id>package-linux-rpm</id>
+                                <phase>package</phase>
+                                <goals><goal>jpackage</goal></goals>
+                                <configuration>
+                                    <name>legacy-sql-architect-mcp</name>
+                                    <vendor>TabForge AI</vendor>
+                                    <appVersion>1.0.0</appVersion>
+                                    <description>MCP server for AI-assisted legacy database analysis</description>
+                                    <input>${project.build.directory}/installer-input</input>
+                                    <mainJar>${project.build.finalName}.jar</mainJar>
+                                    <mainClass>${main.class}</mainClass>
+                                    <destination>${project.build.directory}/jpackage</destination>
+                                    <type>RPM</type>
+                                    <linuxPackageName>legacy-sql-architect-mcp</linuxPackageName>
+                                    <linuxAppCategory>misc</linuxAppCategory>
+
+                                    <!-- Same module restriction as linux-deb — excludes java.desktop and X11/ALSA deps -->
+                                    <addModules>
+                                        <addModule>java.base</addModule>
+                                        <addModule>java.sql</addModule>
+                                        <addModule>java.naming</addModule>
+                                        <addModule>java.logging</addModule>
+                                        <addModule>java.xml</addModule>
+                                        <addModule>java.management</addModule>
+                                        <addModule>java.security.jgss</addModule>
+                                        <addModule>java.security.sasl</addModule>
+                                        <addModule>jdk.crypto.ec</addModule>
+                                        <addModule>jdk.crypto.cryptoki</addModule>
+                                        <addModule>jdk.unsupported</addModule>
+                                    </addModules>
+
+                                    <jlinkOptions>
+                                        <jlinkOption>--strip-debug</jlinkOption>
+                                        <jlinkOption>--no-header-files</jlinkOption>
+                                        <jlinkOption>--no-man-pages</jlinkOption>
+                                        <jlinkOption>--compress=2</jlinkOption>
+                                    </jlinkOptions>
+
+                                    <javaOptions>
+                                        <option>-Xms32m</option>
+                                        <option>-Xmx256m</option>
+                                        <option>-Dfile.encoding=UTF-8</option>
+                                        <option>-Djava.net.preferIPv4Stack=true</option>
+                                    </javaOptions>
+
+                                    <verbose>true</verbose>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- ══════════════════════════════════════════════════════════════
+             macOS DMG installer
+             (run this build on macOS — jpackage requires the macOS SDK)
+             ════════════════════════════════════════════════════════════ -->
+        <profile>
+            <id>macos-dmg</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>prepare-installer-input-macos</id>
+                                <phase>package</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <mkdir dir="${project.build.directory}/installer-input"/>
+                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              todir="${project.build.directory}/installer-input"
+                                              overwrite="true"/>
+                                        <copy file="${project.basedir}/src/main/resources/config.json"
+                                              todir="${project.build.directory}/installer-input"
+                                              overwrite="true"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <plugin>
+                        <groupId>org.panteleyev</groupId>
+                        <artifactId>jpackage-maven-plugin</artifactId>
+                        <version>1.7.2</version>
+                        <executions>
+                            <execution>
+                                <id>package-macos-dmg</id>
+                                <phase>package</phase>
+                                <goals><goal>jpackage</goal></goals>
+                                <configuration>
+                                    <name>LegacySQLArchitectMCP</name>
+                                    <vendor>TabForge AI</vendor>
+                                    <appVersion>1.0.0</appVersion>
+                                    <description>MCP server for AI-assisted legacy database analysis</description>
+                                    <input>${project.build.directory}/installer-input</input>
+                                    <mainJar>${project.build.finalName}.jar</mainJar>
+                                    <mainClass>${main.class}</mainClass>
+                                    <destination>${project.build.directory}/jpackage</destination>
+                                    <type>DMG</type>
+
+                                    <jlinkOptions>
+                                        <jlinkOption>--strip-debug</jlinkOption>
+                                        <jlinkOption>--no-header-files</jlinkOption>
+                                        <jlinkOption>--no-man-pages</jlinkOption>
+                                        <jlinkOption>--compress=2</jlinkOption>
+                                    </jlinkOptions>
+
+                                    <javaOptions>
+                                        <option>-Xms32m</option>
+                                        <option>-Xmx256m</option>
+                                        <option>-Dfile.encoding=UTF-8</option>
+                                        <option>-Djava.net.preferIPv4Stack=true</option>
+                                    </javaOptions>
+
+                                    <verbose>true</verbose>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+    </profiles>
+
+</project>

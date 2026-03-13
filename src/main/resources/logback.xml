@@ -1,0 +1,39 @@
+<configuration>
+
+    <!--
+        IMPORTANT: The MCP server communicates with the client over STDOUT (stdio transport).
+        All log output MUST go to STDERR exclusively (not STDOUT).
+        Writing anything to STDOUT other than valid MCP protocol messages will corrupt
+        the communication channel and cause the MCP client to fail.
+
+        APP_LOGS system property is set programmatically in MCPServer's static initializer
+        before Logback initializes. When running as a jpackage installer, it resolves to
+        <install>\logs\. When running from Maven/IDE, it falls back to ./logs.
+    -->
+
+    <!-- Rolling file appender - logs rotate daily, kept for 7 days -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${APP_LOGS}/legacy-sql-architect-mcp.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${APP_LOGS}/legacy-sql-architect-mcp.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>7</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- STDERR appender - required so Claude Desktop can capture startup errors -->
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="STDERR"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+</configuration>

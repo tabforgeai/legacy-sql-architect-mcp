@@ -1,0 +1,9 @@
+{
+  "db_type": "postgresql",
+  "db_url": "jdbc:postgresql://localhost:5432/your_database",
+  "db_user": "your_user",
+  "db_password": "your_password",
+  "db_schema": "public",
+  "data_sampler_rows": 10,
+  "data_sampler_mask_sensitive": true
+}
