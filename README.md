@@ -173,19 +173,9 @@ Integration tests use embedded PostgreSQL — no Docker, no external database re
 
 ---
 
-## Maven Central
+## Distribution
 
-The only MCP server that gives AI agents end-to-end understanding of legacy databases — schema structure, stored procedure logic, real data, and full dependency chains — all in a single conversation, without copying a single line of SQL.
-
-```xml
-<dependency>
-    <groupId>io.github.tabforgeai</groupId>
-    <artifactId>legacy-sql-architect-mcp</artifactId>
-    <version>1.0.0</version>
-</dependency>
-```
-
-*(Coming soon)*
+Legacy SQL Architect MCP is distributed as native installers — not as a Maven library. There is no dependency to add to your `pom.xml`. Download the installer for your platform from [GitHub Releases](https://github.com/tabforgeai/legacy-sql-architect-mcp/releases) and follow the [Setup Guide](docs/setup-guide.md).
 
 ---
 
