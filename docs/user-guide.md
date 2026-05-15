@@ -14,6 +14,7 @@
    - [generate_documentation](#37-generate_documentation)
    - [find_impact](#38-find_impact)
    - [generate_java_dao](#39-generate_java_dao)
+   - [inspect_apex_performance](#310-inspect_apex_performance)
 4. [Multi-Tool Workflows](#4-multi-tool-workflows)
 5. [Tips for Better Results](#5-tips-for-better-results)
 
@@ -58,6 +59,7 @@ The AI can look at the schema, then read the stored procedure that processes ord
 | `generate_documentation` | Generates Markdown documentation for the entire schema |
 | `find_impact` | Shows what triggers, procedures, and views reference a given table |
 | `generate_java_dao` | Generates Java Entity + Repository classes (plain JDBC) for each table |
+| `inspect_apex_performance` | Analyzes an Oracle APEX application — slowest pages from activity log, SQL from page regions *(Oracle only)* |
 
 ---
 
@@ -294,6 +296,106 @@ The AI can look at the schema, then read the stored procedure that processes ord
 
 ---
 
+### 3.10 inspect_apex_performance
+
+**What it does:** Analyzes an Oracle APEX application for performance issues. Queries APEX dictionary views to find the slowest pages (average and maximum elapsed time, call count) and retrieves the SQL queries embedded in Interactive Reports, Classic Reports, and Interactive Grids. Missing privileges on individual APEX views are reported as warnings rather than hard failures — partial results are still returned.
+
+**When to use it:** When an Oracle APEX application is slow and you need to find out which pages are the problem and which SQL queries inside those pages are causing it. This tool gives you the raw data; combine it with `query_plan_expert` to get the actual diagnosis.
+
+**Oracle only.** APEX runs exclusively on Oracle. The tool returns an error immediately if the configured database is not Oracle.
+
+**Parameters:**
+- `app_id` — APEX application ID (optional; omit to list all applications in the workspace)
+- `page_id` — filter to a specific page (optional; requires `app_id`)
+- `top_n` — number of slowest pages to return from the activity log (optional, default: 10)
+- `include_sql` — whether to include SQL source from page regions (optional, default: true)
+- `days_back` — how many days of activity log history to analyze (optional, default: 30)
+- `include_lovs` — include shared List of Values SQL analysis (optional, default: true)
+- `include_validations` — include page items with SQL sources and SQL-type validations (optional, default: true)
+- `include_processes` — include page processes (PL/SQL blocks, DML processes) and their execution points (optional, default: true)
+- `include_recommendations` — include auto-generated performance recommendations (optional, default: true)
+
+**Required Oracle privileges:**
+```sql
+GRANT SELECT ON APEX_APPLICATIONS                  TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PAGES             TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PAGE_REGIONS      TO your_user;
+GRANT SELECT ON APEX_USER_ACTIVITY_LOG             TO your_user;
+GRANT SELECT ON APEX_WORKSPACE_ACTIVITY_LOG        TO your_user;  -- fallback
+GRANT SELECT ON APEX_APPLICATION_LOVS              TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PAGE_ITEMS        TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PAGE_VALIDATIONS  TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PAGE_PROC         TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PROCESSES         TO your_user;
+GRANT SELECT ON APEX_APPLICATION_COMPUTATIONS      TO your_user;
+```
+
+---
+
+**Prompt examples:**
+
+> "List all APEX applications in this workspace."
+
+> "Inspect APEX performance for application 100. Which pages are the slowest?"
+
+> "Analyze APEX app 100 over the last 60 days — show me the top 20 slowest pages."
+
+> "Look at APEX application 100, page 12. Show me all the SQL queries in the regions on that page."
+
+> "My APEX app (id=100) is slow. Inspect its performance and tell me which page is the worst offender."
+
+> "Inspect APEX performance for app 100 — I don't need the SQL source, just the slowest pages. Set include_sql to false."
+
+> "Analyze APEX app 100 performance. Then take the slowest page's region SQL and run it through query_plan_expert."
+
+> "Check APEX app 100 — are there any warnings about missing privileges? Which views couldn't be accessed?"
+
+> "Analyze APEX app 100 — I only want LOV analysis and recommendations, skip region SQL. Set include_sql to false."
+
+> "What are the auto-generated recommendations for APEX app 100? Focus on HIGH priority ones."
+
+> "Inspect APEX app 100. The LOV 'Employee Names' is listed as LOV_NO_WHERE — what does that mean and how do I fix it?"
+
+---
+
+**What the recommendations engine detects:**
+
+| Category | Priority | Trigger |
+|----------|----------|---------|
+| `SLOW_PAGE` | HIGH / MEDIUM | Page with avg response > 3000ms / 1000ms |
+| `LOV_NO_WHERE` | HIGH / MEDIUM | SQL LOV without a WHERE clause (full table scan on every render) |
+| `LOV_HIGH_USAGE` | MEDIUM | SQL LOV referenced by 3+ page items (wide blast radius) |
+| `LOV_SELECT_STAR` | LOW | LOV using `SELECT *` (LOVs need only 2 columns) |
+| `REGION_SELECT_STAR` | LOW | Report region using `SELECT *` |
+| `VALIDATION_SQL` | LOW | SQL validation firing on every form submit |
+| `ITEM_COMPUTATION_SQL` | LOW | Item with SQL computation firing on every page load |
+| `PROCESS_UNCONDITIONAL` | HIGH / MEDIUM / LOW | Page-level PL/SQL/DML process with no condition — always fires on load or submit |
+| `APP_PROCESS_UNCONDITIONAL` | **Always HIGH** | Application-level process with no condition — runs on every page for every user |
+| `APP_COMPUTATION_SQL` | MEDIUM | Application-level SQL computation with no condition — database query on every page load |
+
+---
+
+**Recommended workflow for diagnosing a slow APEX page:**
+
+```
+Step 1 — inspect_apex_performance (app_id only)
+         → identifies the slowest pages by avg_elapsed_ms
+
+Step 2 — inspect_apex_performance (app_id + page_id of the slowest page)
+         → returns SQL queries from all regions on that page
+
+Step 3 — query_plan_expert (each region's sql_query)
+         → EXPLAIN PLAN, flags TABLE ACCESS FULL, suggests indexes
+
+Step 4 — inspect_schema (tables from the slow query)
+         → confirms which indexes exist and which are missing
+```
+
+**Single prompt that runs the full workflow:**
+> "My Oracle APEX application (id=100) is slow. First inspect its performance to find the slowest page. Then look at the SQL regions on that page. Then run the most suspicious query through query_plan_expert and tell me what indexes to create."
+
+---
+
 ## 4. Multi-Tool Workflows
 
 The real power of Legacy SQL Architect MCP comes from combining tools in a single conversation. The AI builds up context across tool calls.
@@ -369,6 +471,30 @@ The real power of Legacy SQL Architect MCP comes from combining tools in a singl
 
 **Single prompt:**
 > "Prepare a technical onboarding document for a new developer joining our team. Inspect the schema, generate an ERD, read all stored procedures, and write a comprehensive Markdown document that explains the data model, the business rules encoded in the database, and any gotchas a developer should know about."
+
+---
+
+### Workflow 6: "Why is my Oracle APEX application slow?" *(Oracle only)*
+
+```
+1. inspect_apex_performance  → find the slowest pages in the activity log
+2. inspect_apex_performance  → drill into the slowest page, get region SQL
+3. query_plan_expert         → analyze the slow region SQL with EXPLAIN PLAN
+4. inspect_schema            → verify which indexes exist on the involved tables
+```
+
+**Prompts:**
+
+> "Inspect APEX performance for app 100. Show me the 10 slowest pages over the last 30 days."
+
+> "Page 12 is the slowest. Now inspect APEX app 100, page 12 — show me all the SQL in its regions."
+
+> "Take the SQL from the 'Employee Search' Interactive Report region and analyze it with query_plan_expert."
+
+> "Inspect the schema for the tables in that query. Do the filter columns have indexes?"
+
+**Single prompt for the full diagnosis:**
+> "My Oracle APEX application (id=100) has serious performance problems. Inspect its performance to find which page is slowest, get the SQL queries from the regions on that page, analyze the most expensive-looking query with query_plan_expert, and inspect the schema for the relevant tables. Give me a prioritized list of what to fix."
 
 ---
 

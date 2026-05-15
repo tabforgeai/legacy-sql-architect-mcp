@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tabforgeai.legacysqlarchitect.db.DbConfig;
 import io.github.tabforgeai.legacysqlarchitect.db.JdbcClient;
 import io.github.tabforgeai.legacysqlarchitect.tools.DataSampler;
+import io.github.tabforgeai.legacysqlarchitect.tools.InspectApexPerformance;
 import io.github.tabforgeai.legacysqlarchitect.tools.DependencyGraph;
 import io.github.tabforgeai.legacysqlarchitect.tools.FindImpact;
 import io.github.tabforgeai.legacysqlarchitect.tools.GenerateDocumentation;
@@ -193,7 +194,8 @@ public class MCPServer {
                 .toolCall(GenerateMermaidErd.toolDefinition(jsonMapper),    new GenerateMermaidErd(jdbcClient))
                 .toolCall(GenerateDocumentation.toolDefinition(jsonMapper), new GenerateDocumentation(jdbcClient))
                 .toolCall(FindImpact.toolDefinition(jsonMapper),           new FindImpact(jdbcClient))
-                .toolCall(GenerateJavaDao.toolDefinition(jsonMapper),      new GenerateJavaDao(jdbcClient))
+                .toolCall(GenerateJavaDao.toolDefinition(jsonMapper),         new GenerateJavaDao(jdbcClient))
+                .toolCall(InspectApexPerformance.toolDefinition(jsonMapper), new InspectApexPerformance(jdbcClient))
                 .build();
 
         log.info("MCP server started. Listening for requests on stdio.");
