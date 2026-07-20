@@ -3,6 +3,9 @@ package io.github.tabforgeai.legacysqlarchitect.server;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tabforgeai.legacysqlarchitect.db.DbConfig;
 import io.github.tabforgeai.legacysqlarchitect.db.JdbcClient;
+import io.github.tabforgeai.legacysqlarchitect.tools.ApexConfigAudit;
+import io.github.tabforgeai.legacysqlarchitect.tools.ApexExplainBatch;
+import io.github.tabforgeai.legacysqlarchitect.tools.ApexSqlRuntimeStats;
 import io.github.tabforgeai.legacysqlarchitect.tools.DataSampler;
 import io.github.tabforgeai.legacysqlarchitect.tools.InspectApexPerformance;
 import io.github.tabforgeai.legacysqlarchitect.tools.DependencyGraph;
@@ -200,6 +203,9 @@ public class MCPServer {
                 .toolCall(InspectApexPerformance.toolDefinition(jsonMapper), new InspectApexPerformance(jdbcClient))
                 .toolCall(GetApexSource.toolDefinition(jsonMapper),          new GetApexSource(jdbcClient))
                 .toolCall(InspectApexDebug.toolDefinition(jsonMapper),       new InspectApexDebug(jdbcClient))
+                .toolCall(ApexConfigAudit.toolDefinition(jsonMapper),        new ApexConfigAudit(jdbcClient))
+                .toolCall(ApexSqlRuntimeStats.toolDefinition(jsonMapper),    new ApexSqlRuntimeStats(jdbcClient))
+                .toolCall(ApexExplainBatch.toolDefinition(jsonMapper),       new ApexExplainBatch(jdbcClient))
                 .build();
 
         log.info("MCP server started. Listening for requests on stdio.");
