@@ -10,6 +10,8 @@ import io.github.tabforgeai.legacysqlarchitect.tools.FindImpact;
 import io.github.tabforgeai.legacysqlarchitect.tools.GenerateDocumentation;
 import io.github.tabforgeai.legacysqlarchitect.tools.GenerateJavaDao;
 import io.github.tabforgeai.legacysqlarchitect.tools.GenerateMermaidErd;
+import io.github.tabforgeai.legacysqlarchitect.tools.InspectApexDebug;
+import io.github.tabforgeai.legacysqlarchitect.tools.GetApexSource;
 import io.github.tabforgeai.legacysqlarchitect.tools.GetProcedureSource;
 import io.github.tabforgeai.legacysqlarchitect.tools.InspectSchema;
 import io.github.tabforgeai.legacysqlarchitect.tools.QueryPlanExpert;
@@ -196,6 +198,8 @@ public class MCPServer {
                 .toolCall(FindImpact.toolDefinition(jsonMapper),           new FindImpact(jdbcClient))
                 .toolCall(GenerateJavaDao.toolDefinition(jsonMapper),         new GenerateJavaDao(jdbcClient))
                 .toolCall(InspectApexPerformance.toolDefinition(jsonMapper), new InspectApexPerformance(jdbcClient))
+                .toolCall(GetApexSource.toolDefinition(jsonMapper),          new GetApexSource(jdbcClient))
+                .toolCall(InspectApexDebug.toolDefinition(jsonMapper),       new InspectApexDebug(jdbcClient))
                 .build();
 
         log.info("MCP server started. Listening for requests on stdio.");
