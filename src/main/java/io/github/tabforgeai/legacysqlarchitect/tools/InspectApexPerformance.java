@@ -32,14 +32,16 @@ import java.util.stream.Collectors;
  *   - APEX_APPLICATIONS              — application catalog (name, owner, version)
  *   - APEX_APPLICATION_PAGES         — page list (id, name, alias, authorization)
  *   - APEX_APPLICATION_PAGE_REGIONS  — region SQL sources (Reports, Grids, etc.)
- *   - APEX_USER_ACTIVITY_LOG         — per-request timing data (primary source)
- *   - APEX_WORKSPACE_ACTIVITY_LOG    — workspace-level timing (fallback)
+ *   - APEX_WORKSPACE_ACTIVITY_LOG    — per-page-view timing data
  *   - APEX_APPLICATION_LOVS          — shared List of Values SQL queries
  *   - APEX_APPLICATION_PAGE_ITEMS    — page items with SQL sources/named LOVs
- *   - APEX_APPLICATION_PAGE_VALIDATIONS — SQL-type form validations
+ *   - APEX_APPLICATION_PAGE_VAL      — SQL-type form validations
+ *   - APEX_APPLICATION_PAGE_PROC     — page-level processes
+ *   - APEX_APPLICATION_PROCESSES     — application-level processes
+ *   - APEX_APPLICATION_COMPUTATIONS  — application-level computations
  *
  * Privilege model:
- *   All eight views are probed at startup. Missing privileges are recorded in
+ *   All views are probed at startup. Missing privileges are recorded in
  *   "privilege_warnings" and produce empty sections — execution continues with
  *   whatever data is accessible.
  *
@@ -112,13 +114,18 @@ public class InspectApexPerformance
             .enable(SerializationFeature.INDENT_OUTPUT);
 
     /**
-     * Multiplier to convert APEX ELAPSED_TIME (centiseconds) to milliseconds.
+     * Multiplier to convert APEX_WORKSPACE_ACTIVITY_LOG.ELAPSED_TIME (seconds) to milliseconds.
      *
-     * Both APEX_USER_ACTIVITY_LOG and APEX_WORKSPACE_ACTIVITY_LOG store ELAPSED_TIME
-     * in hundredths of a second (centiseconds). Multiplying by 10 converts to milliseconds,
-     * which is the standard unit for web performance measurement.
+     * APEX_WORKSPACE_ACTIVITY_LOG stores ELAPSED_TIME as the page view elapsed time in
+     * seconds (fractional). Multiplying by 1000 converts to milliseconds, the standard unit
+     * for web performance measurement.
+     *
+     * NOTE: verified against the APEX 26 dictionary that APEX_USER_ACTIVITY_LOG does not
+     * exist on this release; APEX_WORKSPACE_ACTIVITY_LOG is the sole activity source. The
+     * seconds→ms assumption still needs confirmation against a populated log (the test
+     * instance had zero activity rows).
      */
-    private static final int CENTISECONDS_TO_MS = 10;
+    private static final int SECONDS_TO_MS = 1000;
 
     /**
      * Pages whose average elapsed time exceeds this threshold (ms) are flagged
@@ -364,11 +371,10 @@ public class InspectApexPerformance
             "APEX_APPLICATIONS",
             "APEX_APPLICATION_PAGES",
             "APEX_APPLICATION_PAGE_REGIONS",
-            "APEX_USER_ACTIVITY_LOG",
             "APEX_WORKSPACE_ACTIVITY_LOG",
             "APEX_APPLICATION_LOVS",
             "APEX_APPLICATION_PAGE_ITEMS",
-            "APEX_APPLICATION_PAGE_VALIDATIONS",
+            "APEX_APPLICATION_PAGE_VAL",
             "APEX_APPLICATION_PAGE_PROC",
             "APEX_APPLICATION_PROCESSES",
             "APEX_APPLICATION_COMPUTATIONS"
@@ -394,7 +400,7 @@ public class InspectApexPerformance
      */
     private List<Map<String, Object>> queryApplications(Connection conn, Integer appId,
             List<String> warnings) {
-        String sql = "SELECT APPLICATION_ID, APPLICATION_NAME, OWNER, VERSION_STRING "
+        String sql = "SELECT APPLICATION_ID, APPLICATION_NAME, OWNER, VERSION "
                    + "FROM APEX_APPLICATIONS "
                    + (appId != null ? "WHERE APPLICATION_ID = ? " : "")
                    + "ORDER BY APPLICATION_ID";
@@ -425,8 +431,13 @@ public class InspectApexPerformance
     /**
      * Queries APEX_APPLICATION_PAGE_REGIONS for regions that contain a SQL query source.
      *
-     * Only regions with a non-null SQL_QUERY column are returned (Interactive Reports,
-     * Classic Reports, Interactive Grids, etc.). Static content regions are excluded.
+     * Only regions that issue a SQL query (QUERY_TYPE_CODE = 'SQL') with a non-null
+     * REGION_SOURCE are returned (Interactive Reports, Classic Reports, Interactive Grids,
+     * Calendars, etc.). Static content, PL/SQL, and chart/dynamic-content regions are
+     * excluded — they don't run an EXPLAIN-able SQL statement.
+     * REGION_SOURCE holds the region's SQL text; it is aliased to sql_query in the output,
+     * and SOURCE_TYPE (e.g. "Interactive Report", "Report") is aliased to region_type.
+     * (APEX 26 has no REGION_TYPE / SQL_QUERY columns — those were assumed pre-verification.)
      *
      * @param conn     active JDBC connection
      * @param appId    application ID to query
@@ -436,11 +447,13 @@ public class InspectApexPerformance
      */
     private List<Map<String, Object>> queryRegionSql(Connection conn, int appId, Integer pageId,
             List<String> warnings) {
-        String sql = "SELECT PAGE_ID, REGION_NAME, REGION_TYPE, SQL_QUERY "
+        String sql = "SELECT PAGE_ID, REGION_NAME, SOURCE_TYPE AS region_type, "
+                   + "REGION_SOURCE AS sql_query "
                    + "FROM APEX_APPLICATION_PAGE_REGIONS "
                    + "WHERE APPLICATION_ID = ? "
                    + (pageId != null ? "AND PAGE_ID = ? " : "")
-                   + "AND SQL_QUERY IS NOT NULL "
+                   + "AND QUERY_TYPE_CODE = 'SQL' "
+                   + "AND REGION_SOURCE IS NOT NULL "
                    + "ORDER BY PAGE_ID, REGION_NAME";
         Object[] params = pageId != null ? new Object[]{appId, pageId} : new Object[]{appId};
         return executeQuery(conn, sql, warnings, "APEX_APPLICATION_PAGE_REGIONS", params);
@@ -449,11 +462,13 @@ public class InspectApexPerformance
     /**
      * Queries the APEX activity log for the top-N slowest pages, aggregated by page ID.
      *
-     * First attempts APEX_USER_ACTIVITY_LOG. If it returns no rows (logging may be
-     * disabled at the workspace level), falls back to APEX_WORKSPACE_ACTIVITY_LOG.
+     * Uses APEX_WORKSPACE_ACTIVITY_LOG — the per-page-view activity log. (APEX 26 has no
+     * APEX_USER_ACTIVITY_LOG view; that name was assumed pre-verification and has been
+     * removed.) If the log is empty, page-view logging may be disabled in workspace
+     * administration, or no pages have been requested yet.
      *
-     * ELAPSED_TIME is stored in centiseconds (1/100 second); this method converts to
-     * milliseconds by multiplying by {@link #CENTISECONDS_TO_MS}.
+     * ELAPSED_TIME is stored in seconds; this method converts to milliseconds by
+     * multiplying by {@link #SECONDS_TO_MS}.
      *
      * @param conn     active JDBC connection
      * @param appId    APEX application ID
@@ -464,19 +479,8 @@ public class InspectApexPerformance
      */
     private List<Map<String, Object>> queryActivityLog(Connection conn, int appId, int topN,
             int daysBack, List<String> warnings) {
-        List<Map<String, Object>> result = queryOneActivityLog(
-                conn, "APEX_USER_ACTIVITY_LOG", "VIEW_DATE", appId, topN, daysBack, warnings);
-        if (result.isEmpty()) {
-            List<Map<String, Object>> wsResult = queryOneActivityLog(
-                    conn, "APEX_WORKSPACE_ACTIVITY_LOG", "LOG_DATE", appId, topN, daysBack, warnings);
-            if (!wsResult.isEmpty()) {
-                warnings.add("APEX_USER_ACTIVITY_LOG returned no data — user-level logging may be "
-                        + "disabled in APEX workspace administration. "
-                        + "Showing APEX_WORKSPACE_ACTIVITY_LOG instead.");
-                return wsResult;
-            }
-        }
-        return result;
+        return queryOneActivityLog(
+                conn, "APEX_WORKSPACE_ACTIVITY_LOG", "VIEW_DATE", appId, topN, daysBack, warnings);
     }
 
     /**
@@ -487,8 +491,8 @@ public class InspectApexPerformance
      * because older APEX installations may run on older Oracle versions.
      *
      * @param conn       active JDBC connection
-     * @param viewName   "APEX_USER_ACTIVITY_LOG" or "APEX_WORKSPACE_ACTIVITY_LOG"
-     * @param dateColumn "VIEW_DATE" for user log, "LOG_DATE" for workspace log
+     * @param viewName   "APEX_WORKSPACE_ACTIVITY_LOG"
+     * @param dateColumn "VIEW_DATE" — the page view timestamp column
      * @param appId      APEX application ID
      * @param topN       maximum rows to return
      * @param daysBack   lookback window in days
@@ -498,8 +502,8 @@ public class InspectApexPerformance
     private List<Map<String, Object>> queryOneActivityLog(Connection conn, String viewName,
             String dateColumn, int appId, int topN, int daysBack, List<String> warnings) {
         String innerSql = "SELECT PAGE_ID, "
-                + "ROUND(AVG(ELAPSED_TIME) * " + CENTISECONDS_TO_MS + ") AS avg_elapsed_ms, "
-                + "MAX(ELAPSED_TIME) * " + CENTISECONDS_TO_MS + " AS max_elapsed_ms, "
+                + "ROUND(AVG(ELAPSED_TIME) * " + SECONDS_TO_MS + ") AS avg_elapsed_ms, "
+                + "MAX(ELAPSED_TIME) * " + SECONDS_TO_MS + " AS max_elapsed_ms, "
                 + "COUNT(*) AS call_count, "
                 + "MAX(" + dateColumn + ") AS last_accessed "
                 + "FROM " + viewName + " "
@@ -514,13 +518,14 @@ public class InspectApexPerformance
     /**
      * Queries APEX_APPLICATION_LOVS for shared List of Values that use SQL queries.
      *
-     * LOVs of type "Static Values" or "Function Body" are excluded — only
-     * "SQL Query" type LOVs are returned, as they are the ones that hit the database
-     * on every page load and render.
+     * Only LOVs with a non-null LIST_OF_VALUES_QUERY are returned — i.e. SQL-based LOVs,
+     * the ones that hit the database on every page load and render. Static and
+     * function-body LOVs (no SQL text) are excluded. (APEX 26 has no LIST_OF_VALUES_TYPE
+     * column; the SQL filter is expressed on LIST_OF_VALUES_QUERY instead.)
      *
      * Usage count (how many page items reference each LOV by name) is returned
      * in the "usage_count" column via a correlated subquery against
-     * APEX_APPLICATION_PAGE_ITEMS.LIST_OF_VALUES_NAME.
+     * APEX_APPLICATION_PAGE_ITEMS.LOV_NAMED_LOV.
      *
      * @param conn     active JDBC connection
      * @param appId    APEX application ID
@@ -533,23 +538,28 @@ public class InspectApexPerformance
                    + "l.LIST_OF_VALUES_QUERY AS lov_query, "
                    + "(SELECT COUNT(*) FROM APEX_APPLICATION_PAGE_ITEMS i "
                    + " WHERE i.APPLICATION_ID = l.APPLICATION_ID "
-                   + " AND i.LIST_OF_VALUES_NAME = l.LIST_OF_VALUES_NAME) AS usage_count "
+                   + " AND i.LOV_NAMED_LOV = l.LIST_OF_VALUES_NAME) AS usage_count "
                    + "FROM APEX_APPLICATION_LOVS l "
                    + "WHERE l.APPLICATION_ID = ? "
-                   + "AND l.LIST_OF_VALUES_TYPE = 'SQL Query' "
+                   + "AND l.LIST_OF_VALUES_QUERY IS NOT NULL "
                    + "ORDER BY usage_count DESC, l.LIST_OF_VALUES_NAME";
         return executeQuery(conn, sql, warnings, "APEX_APPLICATION_LOVS", new Object[]{appId});
     }
 
     /**
-     * Queries APEX_APPLICATION_PAGE_ITEMS for items with SQL-based sources, computations,
-     * or named LOV references.
+     * Queries APEX_APPLICATION_PAGE_ITEMS for items with SQL-based sources or named
+     * LOV references.
      *
-     * Three categories of items are returned:
-     *   1. Items with a named shared LOV (LIST_OF_VALUES_NAME IS NOT NULL) — used to
-     *      compute per-LOV usage counts in the recommendations engine.
-     *   2. Items whose source value is derived from a SQL query (SOURCE_TYPE LIKE '%SQL%').
-     *   3. Items with a SQL computation (COMPUTATION_TYPE LIKE '%SQL%').
+     * Two categories of items are returned:
+     *   1. Items with a named shared LOV (LOV_NAMED_LOV IS NOT NULL, aliased to
+     *      list_of_values_name) — used to compute per-LOV usage counts in the
+     *      recommendations engine.
+     *   2. Items whose source value is derived from a SQL query
+     *      (ITEM_SOURCE_TYPE LIKE '%SQL%', aliased to source_type).
+     *
+     * (APEX 26 page items expose ITEM_SOURCE / ITEM_SOURCE_TYPE / LOV_NAMED_LOV, not the
+     * SOURCE / SOURCE_TYPE / LIST_OF_VALUES_NAME / COMPUTATION_* columns assumed
+     * pre-verification. Item-level computations are not part of this view.)
      *
      * @param conn     active JDBC connection
      * @param appId    APEX application ID
@@ -560,21 +570,20 @@ public class InspectApexPerformance
     private List<Map<String, Object>> queryItemSources(Connection conn, int appId, Integer pageId,
             List<String> warnings) {
         String sql = "SELECT PAGE_ID, ITEM_NAME, DISPLAY_AS, "
-                   + "LIST_OF_VALUES_NAME, SOURCE_TYPE, SOURCE, "
-                   + "COMPUTATION_TYPE, COMPUTATION "
+                   + "LOV_NAMED_LOV AS list_of_values_name, "
+                   + "ITEM_SOURCE_TYPE AS source_type, ITEM_SOURCE AS source "
                    + "FROM APEX_APPLICATION_PAGE_ITEMS "
                    + "WHERE APPLICATION_ID = ? "
                    + (pageId != null ? "AND PAGE_ID = ? " : "")
-                   + "AND (LIST_OF_VALUES_NAME IS NOT NULL "
-                   + "     OR SOURCE_TYPE LIKE '%SQL%' "
-                   + "     OR COMPUTATION_TYPE LIKE '%SQL%') "
+                   + "AND (LOV_NAMED_LOV IS NOT NULL "
+                   + "     OR ITEM_SOURCE_TYPE LIKE '%SQL%') "
                    + "ORDER BY PAGE_ID, ITEM_NAME";
         Object[] params = pageId != null ? new Object[]{appId, pageId} : new Object[]{appId};
         return executeQuery(conn, sql, warnings, "APEX_APPLICATION_PAGE_ITEMS", params);
     }
 
     /**
-     * Queries APEX_APPLICATION_PAGE_VALIDATIONS for validations that execute SQL.
+     * Queries APEX_APPLICATION_PAGE_VAL for validations that execute SQL.
      *
      * SQL-type validations (e.g., "Item NOT in SQL Query", "SQL Expression") run
      * on every form submission of the page they belong to. On high-traffic pages,
@@ -588,15 +597,18 @@ public class InspectApexPerformance
      */
     private List<Map<String, Object>> queryValidations(Connection conn, int appId, Integer pageId,
             List<String> warnings) {
+        // SQL-executing validation types on APEX 26 are the "Exists" / "NOT Exists"
+        // types (VALIDATION_EXPRESSION1 holds a SQL query) plus "PL/SQL" types
+        // (matched via LIKE '%SQL%'). Plain expression/regex validations don't hit the DB.
         String sql = "SELECT PAGE_ID, VALIDATION_NAME, VALIDATION_TYPE, "
                    + "VALIDATION_EXPRESSION1 AS validation_sql "
-                   + "FROM APEX_APPLICATION_PAGE_VALIDATIONS "
+                   + "FROM APEX_APPLICATION_PAGE_VAL "
                    + "WHERE APPLICATION_ID = ? "
                    + (pageId != null ? "AND PAGE_ID = ? " : "")
-                   + "AND VALIDATION_TYPE LIKE '%SQL%' "
+                   + "AND (VALIDATION_TYPE LIKE '%SQL%' OR VALIDATION_TYPE LIKE '%Exists%') "
                    + "ORDER BY PAGE_ID, VALIDATION_NAME";
         Object[] params = pageId != null ? new Object[]{appId, pageId} : new Object[]{appId};
-        return executeQuery(conn, sql, warnings, "APEX_APPLICATION_PAGE_VALIDATIONS", params);
+        return executeQuery(conn, sql, warnings, "APEX_APPLICATION_PAGE_VAL", params);
     }
 
     /**
@@ -614,7 +626,8 @@ public class InspectApexPerformance
      *     page rendering; submit-point processes run on every form submission.
      *   - CONDITION_TYPE — the condition that controls whether the process fires.
      *     A null or empty condition means the process ALWAYS runs, regardless of context.
-     *   - PROCESS_SQL — the PL/SQL or SQL body of the process.
+     *   - PROCESS_SOURCE — the PL/SQL or SQL body of the process (aliased to process_sql;
+     *     the sequence column is EXECUTION_SEQUENCE on APEX 26, aliased to process_sequence).
      *
      * @param conn     active JDBC connection
      * @param appId    APEX application ID
@@ -624,12 +637,12 @@ public class InspectApexPerformance
      */
     private List<Map<String, Object>> queryPageProcesses(Connection conn, int appId, Integer pageId,
             List<String> warnings) {
-        String sql = "SELECT PAGE_ID, PROCESS_SEQUENCE, PROCESS_NAME, PROCESS_TYPE, "
-                   + "PROCESS_POINT, CONDITION_TYPE, PROCESS_SQL "
+        String sql = "SELECT PAGE_ID, EXECUTION_SEQUENCE AS process_sequence, PROCESS_NAME, "
+                   + "PROCESS_TYPE, PROCESS_POINT, CONDITION_TYPE, PROCESS_SOURCE AS process_sql "
                    + "FROM APEX_APPLICATION_PAGE_PROC "
                    + "WHERE APPLICATION_ID = ? "
                    + (pageId != null ? "AND PAGE_ID = ? " : "")
-                   + "ORDER BY PAGE_ID, PROCESS_SEQUENCE";
+                   + "ORDER BY PAGE_ID, EXECUTION_SEQUENCE";
         Object[] params = pageId != null ? new Object[]{appId, pageId} : new Object[]{appId};
         return executeQuery(conn, sql, warnings, "APEX_APPLICATION_PAGE_PROC", params);
     }
@@ -653,7 +666,7 @@ public class InspectApexPerformance
     private List<Map<String, Object>> queryApplicationProcesses(Connection conn, int appId,
             List<String> warnings) {
         String sql = "SELECT PROCESS_SEQUENCE, PROCESS_NAME, PROCESS_TYPE, "
-                   + "PROCESS_POINT, CONDITION_TYPE, PROCESS_SQL "
+                   + "PROCESS_POINT, CONDITION_TYPE, PROCESS AS process_sql "
                    + "FROM APEX_APPLICATION_PROCESSES "
                    + "WHERE APPLICATION_ID = ? "
                    + "ORDER BY PROCESS_SEQUENCE";
@@ -706,8 +719,9 @@ public class InspectApexPerformance
      *       including LOBs and columns not displayed in the report.</li>
      *   <li>{@code VALIDATION_SQL} — SQL validation on a page. Fires on every form submit;
      *       the underlying query must use indexed columns.</li>
-     *   <li>{@code ITEM_COMPUTATION_SQL} — item with a SQL computation source. Fires on
-     *       every page load; flag for review if the page is slow.</li>
+     *   <li>{@code ITEM_SOURCE_SQL} — item whose value is derived from a SQL query source
+     *       (ITEM_SOURCE_TYPE contains "SQL"). Fires on every page load; flag for review if
+     *       the page is slow.</li>
      *   <li>{@code PROCESS_UNCONDITIONAL} — page-level PL/SQL or DML process with no
      *       condition. HIGH if on a slow-page load point, MEDIUM if load point, LOW if submit.</li>
      *   <li>{@code APP_PROCESS_UNCONDITIONAL} — application-level PL/SQL process with no
@@ -863,19 +877,19 @@ public class InspectApexPerformance
             recs.add(rec);
         }
 
-        // --- ITEM_COMPUTATION_SQL ---
+        // --- ITEM_SOURCE_SQL ---
         for (Map<String, Object> item : itemSources) {
-            String compType = item.get("computation_type") != null
-                    ? item.get("computation_type").toString().toUpperCase() : "";
-            if (compType.contains("SQL")) {
+            String srcType = item.get("source_type") != null
+                    ? item.get("source_type").toString().toUpperCase() : "";
+            if (srcType.contains("SQL")) {
                 Map<String, Object> rec = new LinkedHashMap<>();
                 rec.put("priority",    "LOW");
-                rec.put("category",    "ITEM_COMPUTATION_SQL");
+                rec.put("category",    "ITEM_SOURCE_SQL");
                 rec.put("page_id",     item.get("page_id"));
                 rec.put("item_name",   item.get("item_name"));
                 rec.put("message", "Item '" + item.get("item_name") + "' on page " + item.get("page_id")
-                        + " uses a SQL computation that fires on every page load. "
-                        + "If this page is slow, verify the computation query uses indexed columns.");
+                        + " derives its value from a SQL query that fires on every page load. "
+                        + "If this page is slow, verify the item source query uses indexed columns.");
                 recs.add(rec);
             }
         }
@@ -1065,6 +1079,12 @@ public class InspectApexPerformance
                             row.put(cols.get(i - 1), ts.toLocalDateTime().toString());
                         } else if (val instanceof java.sql.Date d) {
                             row.put(cols.get(i - 1), d.toLocalDate().toString());
+                        } else if (val instanceof java.sql.Clob clob) {
+                            // APEX source columns (REGION_SOURCE, PROCESS_SOURCE, PROCESS,
+                            // LIST_OF_VALUES_QUERY, ...) are CLOBs — materialize to String so
+                            // they serialize as JSON text rather than a driver object handle.
+                            long len = clob.length();
+                            row.put(cols.get(i - 1), len == 0 ? "" : clob.getSubString(1, (int) len));
                         } else {
                             row.put(cols.get(i - 1), val);
                         }
