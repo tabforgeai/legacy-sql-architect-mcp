@@ -15,8 +15,15 @@
    - [find_impact](#38-find_impact)
    - [generate_java_dao](#39-generate_java_dao)
    - [inspect_apex_performance](#310-inspect_apex_performance)
-4. [Multi-Tool Workflows](#4-multi-tool-workflows)
-5. [Tips for Better Results](#5-tips-for-better-results)
+   - [get_apex_source](#311-get_apex_source)
+   - [inspect_apex_debug](#312-inspect_apex_debug)
+   - [apex_config_audit](#313-apex_config_audit)
+   - [apex_sql_runtime_stats](#314-apex_sql_runtime_stats)
+   - [apex_explain_batch](#315-apex_explain_batch)
+4. [The APEX Performance Toolkit — How the Six Tools Fit Together](#4-the-apex-performance-toolkit)
+5. [Enabling APEX Debug (for inspect_apex_debug)](#5-enabling-apex-debug)
+6. [Multi-Tool Workflows](#6-multi-tool-workflows)
+7. [Tips for Better Results](#7-tips-for-better-results)
 
 ---
 
@@ -59,7 +66,14 @@ The AI can look at the schema, then read the stored procedure that processes ord
 | `generate_documentation` | Generates Markdown documentation for the entire schema |
 | `find_impact` | Shows what triggers, procedures, and views reference a given table |
 | `generate_java_dao` | Generates Java Entity + Repository classes (plain JDBC) for each table |
-| `inspect_apex_performance` | Analyzes an Oracle APEX application — slowest pages from activity log, SQL from page regions *(Oracle only)* |
+| `inspect_apex_performance` | Analyzes an Oracle APEX application — slowest pages from activity log, SQL from page regions, LOVs, validations, processes, plus recommendations *(Oracle only)* |
+| `get_apex_source` | Extracts the embedded source code of APEX components (regions, processes, validations, LOVs, dynamic actions, …) with a code-wide search *(Oracle only)* |
+| `inspect_apex_debug` | Reads APEX's own debug trace to show, step by step, where a captured page render actually spent its time *(Oracle only)* |
+| `apex_config_audit` | Static audit of APEX component settings for performance anti-patterns (row-count pagination, unbounded max-rows, uncached LOVs, too many server-side dynamic actions) *(Oracle only)* |
+| `apex_sql_runtime_stats` | Correlates an app's SQL with its real runtime cost from V$SQL (buffer gets, executions, elapsed/exec, plan hash) *(Oracle only)* |
+| `apex_explain_batch` | Runs EXPLAIN PLAN over every embedded region/LOV/validation query and flags full scans and Cartesian joins *(Oracle only)* |
+
+The last six tools form a dedicated **Oracle APEX performance toolkit** — see [section 4](#4-the-apex-performance-toolkit) for how they chain together.
 
 ---
 
@@ -315,20 +329,22 @@ The AI can look at the schema, then read the stored procedure that processes ord
 - `include_processes` — include page processes (PL/SQL blocks, DML processes) and their execution points (optional, default: true)
 - `include_recommendations` — include auto-generated performance recommendations (optional, default: true)
 
-**Required Oracle privileges:**
+**Required Oracle privileges** (the APEX_* views are normally readable by any user via public synonyms; grant explicitly only if your environment restricts them):
 ```sql
-GRANT SELECT ON APEX_APPLICATIONS                  TO your_user;
-GRANT SELECT ON APEX_APPLICATION_PAGES             TO your_user;
-GRANT SELECT ON APEX_APPLICATION_PAGE_REGIONS      TO your_user;
-GRANT SELECT ON APEX_USER_ACTIVITY_LOG             TO your_user;
-GRANT SELECT ON APEX_WORKSPACE_ACTIVITY_LOG        TO your_user;  -- fallback
-GRANT SELECT ON APEX_APPLICATION_LOVS              TO your_user;
-GRANT SELECT ON APEX_APPLICATION_PAGE_ITEMS        TO your_user;
-GRANT SELECT ON APEX_APPLICATION_PAGE_VALIDATIONS  TO your_user;
-GRANT SELECT ON APEX_APPLICATION_PAGE_PROC         TO your_user;
-GRANT SELECT ON APEX_APPLICATION_PROCESSES         TO your_user;
-GRANT SELECT ON APEX_APPLICATION_COMPUTATIONS      TO your_user;
+GRANT SELECT ON APEX_APPLICATIONS                TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PAGES           TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PAGE_REGIONS    TO your_user;
+GRANT SELECT ON APEX_WORKSPACE_ACTIVITY_LOG      TO your_user;  -- per-page-view timing
+GRANT SELECT ON APEX_APPLICATION_LOVS            TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PAGE_ITEMS      TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PAGE_VAL        TO your_user;  -- validations
+GRANT SELECT ON APEX_APPLICATION_PAGE_PROC       TO your_user;
+GRANT SELECT ON APEX_APPLICATION_PROCESSES       TO your_user;
+GRANT SELECT ON APEX_APPLICATION_COMPUTATIONS    TO your_user;
 ```
+> These view/column names are verified against Oracle APEX 26.1. The tool degrades
+> gracefully — any view it cannot read becomes a `privilege_warnings` entry, and the
+> remaining sections still return.
 
 ---
 
@@ -367,8 +383,8 @@ GRANT SELECT ON APEX_APPLICATION_COMPUTATIONS      TO your_user;
 | `LOV_HIGH_USAGE` | MEDIUM | SQL LOV referenced by 3+ page items (wide blast radius) |
 | `LOV_SELECT_STAR` | LOW | LOV using `SELECT *` (LOVs need only 2 columns) |
 | `REGION_SELECT_STAR` | LOW | Report region using `SELECT *` |
-| `VALIDATION_SQL` | LOW | SQL validation firing on every form submit |
-| `ITEM_COMPUTATION_SQL` | LOW | Item with SQL computation firing on every page load |
+| `VALIDATION_SQL` | LOW | SQL validation (Exists / NOT Exists / PL-SQL) firing on every form submit |
+| `ITEM_SOURCE_SQL` | LOW | Item whose value comes from a SQL query, firing on every page load |
 | `PROCESS_UNCONDITIONAL` | HIGH / MEDIUM / LOW | Page-level PL/SQL/DML process with no condition — always fires on load or submit |
 | `APP_PROCESS_UNCONDITIONAL` | **Always HIGH** | Application-level process with no condition — runs on every page for every user |
 | `APP_COMPUTATION_SQL` | MEDIUM | Application-level SQL computation with no condition — database query on every page load |
@@ -396,7 +412,221 @@ Step 4 — inspect_schema (tables from the slow query)
 
 ---
 
-## 4. Multi-Tool Workflows
+### 3.11 get_apex_source
+
+**What it does:** Extracts the actual embedded source code of APEX application components — the SQL and PL/SQL that lives *inside* the app, not in the database catalog. Covers 12 component types: regions, page processes, computations, validations, items, branches, dynamic actions, dynamic action actions, LOVs, authorization schemes, application processes, and application computations. Supports a code-wide `search` (grep across every component's code) and truncation of long snippets.
+
+**When to use it:** When you need to read what a component actually *does* — for example, after `inspect_apex_debug` or `apex_explain_batch` points at a specific region/process, use this to pull its code. Also great for "find every place this table/function/hint is used across the whole app."
+
+**How it stays version-proof:** the tool introspects each dictionary view's columns (via `ALL_TAB_COLUMNS`) and selects only the columns that exist on your APEX version, so it tolerates dictionary drift across APEX 19.x–26.x without ORA-00904 errors.
+
+**Oracle only.**
+
+**Parameters:**
+- `app_id` — APEX application ID (optional; omit to list applications)
+- `page_id` — restrict to a specific page (optional)
+- `component_types` — array subset of the 12 types to extract (optional; default all)
+- `search` — case-insensitive text to grep across all component code (optional)
+- `max_code_length` — truncate each code snippet to N chars (optional; 0 = unlimited)
+
+**Prompt examples:**
+
+> "Get the APEX source for app 100, page 12 — show me the SQL in every region and process."
+
+> "Search all of APEX app 100 for any component that references the `EMPLOYEES` table."
+
+> "In APEX app 100, find every LOV whose query uses `SELECT *`."
+
+> "Show me the PL/SQL code of all page processes on page 30 of APEX app 100."
+
+> "Search APEX app 100 for the optimizer hint `/*+ FULL */` — is it used anywhere?"
+
+---
+
+### 3.12 inspect_apex_debug
+
+**What it does:** Reads APEX's own debug trace (`APEX_DEBUG_MESSAGES`) and reconstructs each captured "page view", then drills into the slowest one to show its individual trace steps ordered by execution time — the empirical "where did this render actually spend its time" breakdown. Reports each step's execution/elapsed time in milliseconds and produces `DEBUG_SLOW_STEP` recommendations pointing you to the exact page to open.
+
+**When to use it:** When you have a slow page and want *measured* proof of which step is slow (not a static guess). Requires that APEX debug was enabled when the page ran — see [section 5](#5-enabling-apex-debug).
+
+**Oracle only.**
+
+**Parameters:**
+- `app_id` — APEX application ID (optional; omit to list applications)
+- `page_id` — restrict to a specific page (optional)
+- `page_view_id` — drill into a specific captured page view (optional; default = auto-drill into the slowest)
+- `top_n` — number of slowest page views / slowest steps to return (optional, default 10)
+- `days_back` — debug-history lookback window in days (optional, default 7)
+- `min_execution_ms` — only return steps at least this slow (optional, default 0)
+
+**Prompt examples:**
+
+> "Enable-debug is on and I reproduced the slow page. Inspect APEX debug for app 100 — which page view was slowest and which step inside it took the most time?"
+
+> "Inspect APEX debug for app 100, page 12. Show me the 15 slowest steps over the last 2 days."
+
+> "Inspect APEX debug for app 100 and only show steps slower than 200ms."
+
+> "There's no debug data for app 100 — what do I need to do to capture it?"
+
+---
+
+### 3.13 apex_config_audit
+
+**What it does:** A **static** audit of an app's component *settings* (no SQL parsing, no runtime data) for well-known performance anti-patterns. Detects: row-count pagination schemes that force a `COUNT(*)` over the whole result set, regions with an unbounded "Maximum Rows To Query", widely-used SQL LOVs with no result caching, pages with many "Execute Server-side Code" dynamic actions, and pages crowded with synchronous SQL regions. Returns a per-category summary and prioritized findings.
+
+**When to use it:** As a fast first pass on any app — it works even with zero activity/debug data, so it's the ideal "what's obviously mis-configured?" check before you dig into runtime metrics.
+
+**Oracle only.**
+
+**Parameters:**
+- `app_id` — APEX application ID (optional; omit to list applications)
+- `page_id` — restrict region/dynamic-action checks to one page (optional)
+
+**Findings:**
+
+| Category | Priority | Trigger |
+|----------|----------|---------|
+| `PAGINATION_ROW_COUNT` | MEDIUM | Report region with a "… of Z" pagination scheme (COUNT over full result set each render) |
+| `UNBOUNDED_MAX_ROWS` | MEDIUM / LOW | Maximum Rows To Query > 10000 (MEDIUM) or unset (LOW) |
+| `LOV_NO_CACHE` | LOW | SQL LOV used by 3+ items with no result caching |
+| `TOO_MANY_SERVER_DAS` | MEDIUM | Page with 5+ "Execute Server-side Code" dynamic actions (one AJAX round-trip each) |
+| `MANY_SQL_REGIONS_PER_PAGE` | LOW | Page with 6+ SQL regions, few lazy-loaded (all query synchronously on load) |
+
+**Prompt examples:**
+
+> "Run a config audit on APEX app 100. What are the biggest configuration problems?"
+
+> "Audit the configuration of app 100, page 3100 — is anything mis-set on that page?"
+
+> "Config-audit APEX app 100 and show me only the MEDIUM findings."
+
+> "Which pages in app 100 have too many server-side dynamic actions?"
+
+---
+
+### 3.14 apex_sql_runtime_stats
+
+**What it does:** Correlates an app's SQL with its **real runtime cost** from the Oracle shared pool (`V$SQL`). Filters `V$SQL` by the application's parsing schema and ranks statements by a chosen metric (buffer gets, elapsed, executions, CPU, disk reads), returning executions, buffer gets (total and per-exec), disk reads, rows, elapsed/CPU ms per execution, plan hash, and the SQL text. An optional `sql_like` filter pins a specific query fragment. Produces `HOT_SQL` recommendations for the expensive statements.
+
+**When to use it:** When you want the empirical "what actually costs the most" — the truth that separates a scary-looking query from a genuinely expensive one.
+
+**Important limitations:**
+- A statement appears only while it is still **cached** in the shared pool. Run the pages of interest first, then query this tool.
+- Reads only the always-available `V$SQL` — **no AWR/ASH** (those need the Oracle Diagnostics Pack license).
+- Needs `SELECT` on `V$SQL`. Missing privilege degrades to a warning, not a crash.
+
+**Oracle only.**
+
+**Parameters:**
+- `app_id` — APEX application ID (its `OWNER` schema is the V$SQL filter)
+- `order_by` — `buffer_gets` (default) | `elapsed` | `executions` | `cpu` | `disk_reads`
+- `top_n` — number of statements to return (optional, default 20)
+- `min_executions` — ignore statements run fewer times than this (optional, default 1)
+- `sql_like` — optional case-insensitive SQL_TEXT fragment to narrow the match
+
+**Prompt examples:**
+
+> "Show me the most expensive SQL for APEX app 100 by buffer gets."
+
+> "Runtime SQL stats for app 100, ordered by elapsed time per execution — top 10."
+
+> "For app 100, find the runtime cost of any statement that touches the `EMPLOYEES` table (use sql_like)."
+
+> "Get the hottest SQL for app 100, then pass the worst sql_id to query_plan_expert."
+
+**Recommended grant (if the app user lacks it):**
+```sql
+GRANT SELECT ON V_$SQL TO your_user;   -- or: GRANT SELECT_CATALOG_ROLE TO your_user;
+```
+
+---
+
+### 3.15 apex_explain_batch
+
+**What it does:** Runs `EXPLAIN PLAN` over **every** SQL statement embedded in an app's report/LOV/validation components and reports each statement's optimizer cost, estimated rows, and structural red flags (`TABLE ACCESS FULL`, `MERGE JOIN CARTESIAN`, `INDEX FULL SCAN`) — without executing any of them. It turns "here are 200 embedded queries" into "these 6 have a full table scan."
+
+**How it handles APEX-isms:** bind variables (`:P1_X`) need no definition; APEX substitution strings (`&ITEM.`) are neutralized to a bind placeholder so the statement parses; a statement that still can't be parsed is reported with `status: "error"` and its Oracle message, never aborting the batch. EXPLAIN PLAN writes only to the session `PLAN_TABLE` (no business data touched); the tool transiently lifts its read-only flag for the batch and restores it afterward.
+
+**When to use it:** As a bulk triage — one call surfaces the shortlist of queries worth handing to `query_plan_expert` and `get_apex_source`.
+
+**Oracle only.**
+
+**Parameters:**
+- `app_id` — APEX application ID (optional; omit to list applications)
+- `page_id` — restrict region/validation statements to one page (optional)
+- `component_types` — subset of `["regions","lovs","validations"]` (optional; default all)
+- `max_statements` — safety cap on how many statements to explain (optional, default 100)
+
+**Prompt examples:**
+
+> "EXPLAIN every query in APEX app 100, page 12. Which ones have a full table scan?"
+
+> "Batch-explain all region and LOV SQL for app 100 and list only the statements with red flags."
+
+> "Run apex_explain_batch on app 100 and give me the 5 highest-cost statements."
+
+> "Explain the validation queries on page 30 of app 100 — any Cartesian joins?"
+
+---
+
+## 4. The APEX Performance Toolkit
+
+The six Oracle-only tools above are designed to work as a set. Each answers a different question, and they hand off to one another:
+
+| Question | Tool | Needs runtime data? |
+|----------|------|--------------------|
+| "What's obviously mis-configured?" | `apex_config_audit` | No — pure settings |
+| "Which embedded queries have bad plans?" | `apex_explain_batch` | No — static EXPLAIN |
+| "What SQL/PLSQL does this component contain?" | `get_apex_source` | No |
+| "Where does the app spend time overall?" | `inspect_apex_performance` | Activity log |
+| "Which step of *this* render was slow?" | `inspect_apex_debug` | Debug trace |
+| "What does this SQL actually cost to run?" | `apex_sql_runtime_stats` | Shared pool (V$SQL) |
+
+**A complete diagnosis, start to finish:**
+
+```
+1. apex_config_audit (app_id)        → fix the obvious config anti-patterns first
+2. apex_explain_batch (app_id)       → shortlist queries with full scans / Cartesian joins
+3. inspect_apex_performance (app_id) → find the slowest pages + the recommendations engine
+4. inspect_apex_debug (app_id)       → (with debug enabled) measure the slowest render's steps
+5. apex_sql_runtime_stats (app_id)   → confirm the real runtime cost of the suspect SQL
+6. get_apex_source (app_id, page_id) → read the offending component's code to fix it
+   query_plan_expert (that SQL)      → get the execution plan + index advice
+```
+
+**Single prompt for the whole toolkit:**
+> "Do a full performance diagnosis of Oracle APEX app 100. Start with a config audit, then batch-explain the embedded SQL to find bad plans, then find the slowest pages, then check the real runtime cost of the worst queries in V$SQL, and finally read the source of the top offender and tell me exactly what to change — prioritized."
+
+---
+
+## 5. Enabling APEX Debug
+
+`inspect_apex_debug` reads data that APEX only writes **when debug is enabled** for the session/request. On a fresh app the debug tables are empty, and the tool will tell you so. To capture a trace:
+
+**1. Allow debugging in the application**
+- In App Builder: **Edit Application Definition → Properties → Debugging = "Yes"** (Debugging must not be "No").
+
+**2. Run the slow page with debug on** (any one of):
+- Append `&p_debug=YES` (or the level `&p_debug=LEVEL9`) to the page URL, **or**
+- On the Developer Toolbar at the bottom of a running page, click **Debug**, then reload the page, **or**
+- Set it programmatically for a session with `apex_debug`.
+
+**3. Reproduce the slowness** — click through the page exactly as a user would, so APEX records the timed trace.
+
+**4. Query the trace**
+> "Inspect APEX debug for app 100 — I just reproduced the slow page with debug on."
+
+**Notes:**
+- Debug data is retained for a limited time (configurable; often up to ~2 weeks) and then purged, so query it reasonably soon after reproducing.
+- The times are stored in seconds and reported by the tool in milliseconds.
+- Enabling debug adds overhead to those specific requests — turn app-level debugging back down when you're done capturing.
+
+The same "run the pages first" principle helps `apex_sql_runtime_stats`: statements are only visible in `V$SQL` while cached, so exercise the pages, then query the stats.
+
+---
+
+## 6. Multi-Tool Workflows
 
 The real power of Legacy SQL Architect MCP comes from combining tools in a single conversation. The AI builds up context across tool calls.
 
@@ -498,7 +728,7 @@ The real power of Legacy SQL Architect MCP comes from combining tools in a singl
 
 ---
 
-## 5. Tips for Better Results
+## 7. Tips for Better Results
 
 **Always start with inspect_schema.**
 The AI builds its understanding of your database from the schema. If you ask it about orders before it has seen the schema, it has to guess. Inspect first, then ask.
@@ -520,3 +750,6 @@ Schema alone can mislead. A column called `status` might have 15 possible values
 
 **Use table_filter for large schemas.**
 If your schema has hundreds of tables, use `table_filter` with a SQL LIKE pattern to focus on the relevant subset: `"table_filter": "ORD%"` for all order-related tables.
+
+**For APEX, start with the tools that need no runtime data.**
+`apex_config_audit` and `apex_explain_batch` work on a fresh app with zero activity — run them first. `inspect_apex_debug` and `apex_sql_runtime_stats` need you to actually exercise the pages first (with debug enabled for the former); see [section 5](#5-enabling-apex-debug). A natural order is: config audit → explain batch → performance → (reproduce pages) → debug + runtime stats → get_apex_source to read and fix the offender.
