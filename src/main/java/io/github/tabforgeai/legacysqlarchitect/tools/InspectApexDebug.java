@@ -497,6 +497,13 @@ public class InspectApexDebug
                             row.put(cols.get(i - 1), ts.toLocalDateTime().toString());
                         } else if (val instanceof java.sql.Date d) {
                             row.put(cols.get(i - 1), d.toLocalDate().toString());
+                        } else if (val != null && val.getClass().getName().startsWith("oracle.sql.TIMESTAMP")) {
+                            // Oracle TIMESTAMP WITH [LOCAL] TIME ZONE columns come back as
+                            // oracle.sql.TIMESTAMPTZ / TIMESTAMPLTZ, which do NOT match java.sql.Timestamp
+                            // and would otherwise serialize as "oracle.sql.TIMESTAMPTZ@<hash>". Ask the
+                            // driver to normalize them to a java.sql.Timestamp for a readable ISO string.
+                            Timestamp ts = rs.getTimestamp(i);
+                            row.put(cols.get(i - 1), ts == null ? null : ts.toLocalDateTime().toString());
                         } else {
                             row.put(cols.get(i - 1), val);
                         }
