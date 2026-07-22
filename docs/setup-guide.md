@@ -28,18 +28,18 @@
 
 ### Windows
 
-1. Download `legacy-sql-architect-mcp-1.0.0.exe`
-2. Run the installer — it installs to `C:\Program Files\Legacy SQL Architect MCP\` by default
+1. Download `LegacySQLArchitectMCP-1.1.0.exe`
+2. Run the installer — it installs to `C:\Program Files\LegacySQLArchitectMCP\` by default
 3. After installation, the following files will be present:
 
 ```
-C:\Program Files\Legacy SQL Architect MCP\
+C:\Program Files\LegacySQLArchitectMCP\
 ├── app\
 │   ├── legacy-sql-architect-mcp.jar   ← application JAR
 │   └── config.json                    ← database connection config (edit this)
 ├── runtime\                           ← bundled Java runtime (no JDK needed)
 ├── logs\                              ← log files written here automatically
-└── legacy-sql-architect-mcp.exe       ← launcher
+└── LegacySQLArchitectMCP.exe          ← launcher
 ```
 
 ### macOS
@@ -60,7 +60,7 @@ Config and logs are located next to the JAR file.
 ### Linux (Debian/Ubuntu)
 
 ```bash
-sudo dpkg -i legacy-sql-architect-mcp-1.0.0.deb
+sudo dpkg -i legacy-sql-architect-mcp_1.1.0_amd64.deb
 ```
 
 Installed to:
@@ -78,7 +78,7 @@ Installed to:
 ### Linux (Red Hat/Fedora)
 
 ```bash
-sudo rpm -i legacy-sql-architect-mcp-1.0.0.rpm
+sudo rpm -i legacy-sql-architect-mcp-1.1.0-1.x86_64.rpm
 ```
 
 Installed to the same structure as Debian above (`/opt/legacy-sql-architect-mcp/`).
@@ -159,7 +159,7 @@ Log files are written automatically. The location depends on how the server is s
 
 **Windows example:**
 ```
-C:\Program Files\Legacy SQL Architect MCP\logs\legacy-sql-architect-mcp.log
+C:\Program Files\LegacySQLArchitectMCP\logs\legacy-sql-architect-mcp.log
 ```
 
 The log file is rolled daily. If you encounter any problems, check the log for error details before raising a support issue.
@@ -185,7 +185,7 @@ Claude Desktop uses a JSON configuration file to register MCP servers.
 {
   "mcpServers": {
     "legacy-sql-architect": {
-      "command": "C:\\Program Files\\Legacy SQL Architect MCP\\legacy-sql-architect-mcp.exe",
+      "command": "C:\\Program Files\\LegacySQLArchitectMCP\\LegacySQLArchitectMCP.exe",
       "args": []
     }
   }
@@ -256,7 +256,7 @@ Add to `.cursor/mcp.json` in your project root (or the global Cursor MCP config)
 {
   "mcpServers": {
     "legacy-sql-architect": {
-      "command": "C:\\Program Files\\Legacy SQL Architect MCP\\legacy-sql-architect-mcp.exe",
+      "command": "C:\\Program Files\\LegacySQLArchitectMCP\\LegacySQLArchitectMCP.exe",
       "args": []
     }
   }

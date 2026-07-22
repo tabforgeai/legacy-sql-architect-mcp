@@ -52,22 +52,35 @@ The AI inspects the schema, reads the stored procedure that processes orders, th
 | `find_impact` | Everything that depends on a given table |
 | `generate_java_dao` | Java Entity + Repository classes (plain JDBC) per table |
 
+### Oracle APEX toolkit
+
+Six additional tools for diagnosing Oracle APEX application performance (Oracle-only):
+
+| Tool | What it does |
+|------|-------------|
+| `inspect_apex_performance` | App/page/region/LOV overview, slowest pages, anti-pattern recommendations |
+| `get_apex_source` | Extract embedded APEX code across 12 component types (regions, processes, LOVs, …) |
+| `inspect_apex_debug` | Reconstruct page views from APEX debug messages and drill into the slowest steps |
+| `apex_config_audit` | Static audit: pagination COUNT(*), unbounded max-rows, uncached LOVs, too many server-side DAs |
+| `apex_sql_runtime_stats` | Real runtime cost of an app's SQL from V$SQL (buffer gets, elapsed, executions) |
+| `apex_explain_batch` | Batch EXPLAIN PLAN of an app's SQL with red-flag detection (full scans, Cartesian joins) |
+
 ---
 
 ## Quick Start
 
 ### 1. Install
 
-**Windows** — download and run `legacy-sql-architect-mcp-1.0.0.exe`
+**Windows** — download and run `LegacySQLArchitectMCP-1.1.0.exe`
 
 **Linux (Debian/Ubuntu)**
 ```bash
-sudo dpkg -i legacy-sql-architect-mcp-1.0.0.deb
+sudo dpkg -i legacy-sql-architect-mcp_1.1.0_amd64.deb
 ```
 
 **Linux (RHEL/Fedora)**
 ```bash
-sudo rpm -i legacy-sql-architect-mcp-1.0.0.rpm
+sudo rpm -i legacy-sql-architect-mcp-1.1.0-1.x86_64.rpm
 ```
 
 **macOS / JAR** — requires Java 21+
